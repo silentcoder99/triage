@@ -1,0 +1,25 @@
+{
+  "name": "Triage",
+  "short_name": "Triage",
+  "description": "A short list of tasks, ranked by asking you which comes first.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14342F",
+  "theme_color": "#14342F",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='108' fill='%2314342F'/%3E%3Crect x='104' y='120' width='304' height='104' rx='16' fill='%23F3EFE4'/%3E%3Crect x='104' y='288' width='304' height='104' rx='16' fill='%23E9A22B'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%2314342F'/%3E%3Crect x='136' y='152' width='240' height='84' rx='12' fill='%23F3EFE4'/%3E%3Crect x='136' y='276' width='240' height='84' rx='12' fill='%23E9A22B'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
