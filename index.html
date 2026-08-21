@@ -184,7 +184,7 @@
 </div>
 
 <div class="dock">
-  <button class="sort" id="sortBtn" hidden></button>
+  <button class="sort" id="sortBtn">Sort &#183; show top 5</button>
   <form class="add" id="addForm">
     <input id="addInput" placeholder="Add a task" autocomplete="off" enterkeyhint="done" maxlength="180">
     <button class="plus" type="submit" aria-label="Add task">+</button>
@@ -279,14 +279,18 @@
 
   function active() { return state.tasks.filter(function (t) { return !t.completedAt; }); }
   function finished() { return state.tasks.filter(function (t) { return t.completedAt; }); }
+  // The list the user actually sees. Hidden tasks exist only inside a sort.
+  function shown() { return state.tasks.filter(function (t) { return !t.completedAt && !t.hidden; }); }
+  function listIsFull() { return shown().length >= KEEP; }
 
   function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
 
-  // Exact worst-case comparison count for merge sort of n items.
+  // Worst-case comparisons for a merge sort that stops each merge once the
+  // top KEEP of that merge are settled. Every merge costs min(size - 1, KEEP).
   function worstCase(n) {
     if (n < 2) return 0;
     var lo = Math.floor(n / 2);
-    return worstCase(n - lo) + worstCase(lo) + n - 1;
+    return worstCase(n - lo) + worstCase(lo) + Math.min(n - 1, KEEP);
   }
 
   function pruneVerdicts() {
@@ -322,14 +326,14 @@
   /* ---------- render ---------- */
 
   function render() {
-    var open = active(), done = finished();
+    var open = shown(), done = finished();
     el.list.innerHTML = "";
-    el.count.textContent = open.length ? plural(open.length, "open") : "";
+    el.count.textContent = open.length ? open.length + " open" : "";
 
     if (!open.length && !done.length) {
       var e = document.createElement("p");
       e.className = "empty";
-      e.textContent = "Nothing here yet. Add the first thing you're avoiding.";
+      e.textContent = "Nothing on the list. Add the first thing you're avoiding.";
       el.list.appendChild(e);
     }
 
@@ -355,14 +359,6 @@
       el.list.appendChild(note);
     }
 
-    if (open.length < 2) {
-      el.sortBtn.hidden = true;
-    } else {
-      el.sortBtn.hidden = false;
-      el.sortBtn.textContent = open.length > KEEP
-        ? "Sort \u00b7 keep top " + KEEP
-        : "Sort the list";
-    }
   }
 
   function rowFor(t, rank) {
@@ -401,25 +397,37 @@
 
   /* ---------- actions ---------- */
 
+  // The list holds five. Anything added past that waits out of sight for a sort.
+  // Whether this happens is fully readable off the screen, so saying so leaks nothing.
+  var BENCHED = "Saved. It comes back at the next sort.";
+
   function add(text) {
     text = text.trim();
     if (!text) return;
-    state.tasks.push({ id: uid(), text: text, createdAt: Date.now(), completedAt: null });
+    var benched = listIsFull();
+    state.tasks.push({
+      id: uid(), text: text, createdAt: Date.now(), completedAt: null, hidden: benched
+    });
     save(); render();
+    if (benched) toast(BENCHED, null, null);
   }
 
   function toggle(id) {
     var t = state.tasks.find(function (x) { return x.id === id; });
     if (!t) return;
     if (t.completedAt) {
+      var benched = listIsFull();
       t.completedAt = null;
+      t.hidden = benched;
       state.tasks = state.tasks.filter(function (x) { return x.id !== id; });
       var done = finished();
       state.tasks = state.tasks.filter(function (x) { return !x.completedAt; }).concat([t]).concat(done);
-    } else {
-      t.completedAt = Date.now();
-      state.tasks = state.tasks.filter(function (x) { return x.id !== id; }).concat([t]);
+      save(); render();
+      if (benched) toast(BENCHED, null, null);
+      return;
     }
+    t.completedAt = Date.now();
+    state.tasks = state.tasks.filter(function (x) { return x.id !== id; }).concat([t]);
     save(); render();
   }
 
@@ -434,25 +442,29 @@
 
   function triage() {
     var open = active();
-    if (open.length < 2 || session) return;
+    if (open.length < 2 || session) {
+      if (!session) toast("Nothing to sort.", null, null);
+      return;
+    }
 
     var snapshot = state.tasks.map(function (t) {
-      return { id: t.id, text: t.text, createdAt: t.createdAt, completedAt: t.completedAt };
+      return {
+        id: t.id, text: t.text, createdAt: t.createdAt,
+        completedAt: t.completedAt, hidden: !!t.hidden
+      };
     });
 
     session = { asked: 0, recalled: 0, total: worstCase(open.length) };
     openDuel();
 
     mergeSort(open).then(function (sorted) {
-      var kept = sorted.slice(0, KEEP);
-      var cut = sorted.slice(KEEP);
-      state.tasks = kept.concat(finished());
+      sorted.forEach(function (t, i) { t.hidden = i >= KEEP; });
+      state.tasks = sorted.concat(finished());
       pruneVerdicts();
       var report = session;
       session = null;
       closeDuel();
       save(); render();
-      report.cut = cut.length;
       announce(report, snapshot);
     }).catch(function (err) {
       session = null;
@@ -472,10 +484,12 @@
     });
   }
 
+  // Once KEEP elements of this merge are settled, nothing further can reach the
+  // top KEEP overall, so the rest is concatenated unranked and never compared.
   function merge(left, right) {
     var out = [], i = 0, j = 0;
     function step() {
-      if (i >= left.length || j >= right.length) {
+      if (out.length >= KEEP || i >= left.length || j >= right.length) {
         return Promise.resolve(out.concat(left.slice(i)).concat(right.slice(j)));
       }
       return compare(left[i], right[j]).then(function (leftFirst) {
@@ -575,7 +589,6 @@
   function announce(report, snapshot) {
     var bits = [plural(report.asked, "tap")];
     if (report.recalled) bits.push(report.recalled + " recalled");
-    if (report.cut) bits.push(report.cut + " cut");
     toast(bits.join(" \u00b7 "), "Undo", function () {
       state.tasks = snapshot;
       pruneVerdicts(); save(); render();
