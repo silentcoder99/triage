@@ -48,11 +48,17 @@
     display:flex;align-items:baseline;justify-content:space-between;
     padding:calc(22px + env(safe-area-inset-top)) 0 20px;
   }
+  .brand{display:flex;align-items:baseline;gap:9px;min-width:0}
   .wordmark{
     font-family:var(--mono);
     font-size:13px;letter-spacing:.28em;text-transform:uppercase;
     color:var(--marigold);
   }
+  .build{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;
+    color:var(--bone-faint);font-variant-numeric:tabular-nums;white-space:nowrap;
+  }
+  .build.stale{color:var(--marigold)}
   .count{font-family:var(--mono);font-size:12px;color:var(--bone-faint);letter-spacing:.06em}
 
   /* ---------- list ---------- */
@@ -177,7 +183,10 @@
 
 <div class="app">
   <div class="top">
-    <div class="wordmark">Triage</div>
+    <div class="brand">
+      <span class="wordmark">Triage</span>
+      <span class="build" id="build"></span>
+    </div>
     <div class="count" id="count"></div>
   </div>
   <div id="list"></div>
@@ -215,6 +224,8 @@
   var KEY = "triage-state-v1";
   var KEEP = 5;
   var CANCEL = { cancelled: true };
+  // Keep in step with VERSION in sw.js — bump both on every deploy.
+  var BUILD = "2026.08.21-1";
 
   var state = { tasks: [], verdicts: {} };
   var session = null;
@@ -225,6 +236,7 @@
   var el = {
     list: document.getElementById("list"),
     count: document.getElementById("count"),
+    build: document.getElementById("build"),
     sortBtn: document.getElementById("sortBtn"),
     form: document.getElementById("addForm"),
     input: document.getElementById("addInput"),
@@ -634,9 +646,72 @@
     armMidnight();
   });
 
+  /* ---------- app updates ---------- */
+
+  el.build.textContent = "v" + BUILD;
+
+  // The label reports the build of the page you are reading. If a service
+  // worker is serving a different generation, say so rather than hide it.
+  function stampVersion() {
+    var ctrl = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!ctrl) return;
+    try {
+      var ch = new MessageChannel();
+      ch.port1.onmessage = function (ev) {
+        var served = ev.data && ev.data.version;
+        if (!served || served === BUILD) return;
+        el.build.textContent = "v" + BUILD + " \u00b7 sw " + served;
+        el.build.className = "build stale";
+      };
+      ctrl.postMessage({ type: "VERSION" }, [ch.port2]);
+    } catch (e) {}
+  }
+
+  var waitingWorker = null;
+  var reloading = false;
+  var lastCheck = 0;
+
+  function offerUpdate(worker) {
+    waitingWorker = worker;
+    if (session) return; // never interrupt a sort in progress
+    toast("New version ready.", "Reload", function () {
+      waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    });
+  }
+
   try {
     if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
-      navigator.serviceWorker.register("./sw.js").catch(function () {});
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        if (reloading) return;
+        reloading = true;
+        location.reload();
+      });
+
+      navigator.serviceWorker.register("./sw.js").then(function (reg) {
+        stampVersion();
+        if (reg.waiting) offerUpdate(reg.waiting);
+
+        reg.addEventListener("updatefound", function () {
+          var next = reg.installing;
+          if (!next) return;
+          next.addEventListener("statechange", function () {
+            // A controller already exists, so this is an upgrade, not a first install.
+            if (next.state === "installed" && navigator.serviceWorker.controller) {
+              offerUpdate(next);
+            }
+          });
+        });
+
+        // An installed PWA can sit open for days without a navigation, so poll
+        // for a new build whenever it comes back to the foreground.
+        document.addEventListener("visibilitychange", function () {
+          if (document.hidden) return;
+          if (waitingWorker) { offerUpdate(waitingWorker); return; }
+          if (Date.now() - lastCheck < 6e5) return;
+          lastCheck = Date.now();
+          reg.update().catch(function () {});
+        });
+      }).catch(function () {});
     }
   } catch (e) {}
 })();
